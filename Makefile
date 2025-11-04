@@ -35,7 +35,6 @@ docker-compose-restart:
 	docker compose -f $(DOCKER_COMPOSE_FILE) up -d $(if $(SERVICES),$(SERVICES))
 .PHONY: docker-compose-restart
 
-
 # ============================== TESTING ============================== #
 
 docker-export-logs:
@@ -98,3 +97,5 @@ integration-tests:
 		--suffix   "$(RESULT_SUFFIX)"
 
 .PHONY: integration-tests
+
+# ============================== CHAOS MONKEY ============================== #
