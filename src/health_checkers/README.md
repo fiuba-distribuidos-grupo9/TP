@@ -56,7 +56,9 @@ docker build -t tp-health-checker -f Dockerfile .
 
 ```bash
 
-docker run --rm -it \
+docker network create ringnet
+
+docker run --rm -it --name hc1_container --network ringne \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e NODE_ID=$NUMERO_DE_NODO \
   -e NODE_NAME=hc-$NUMERO_DE_NODO \
@@ -71,35 +73,74 @@ docker run --rm -it \
 
 ```bash
 
+docker network create ringnet
+
 # Nodo 1.
-docker run --rm -it \
+docker run --rm -it --name hc1_container --network ringnet \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e NODE_ID=1 \
-  -e NODE_NAME=hc-1 \
-  -e LISTEN_PORT=9101 \
-  -e RING_PEERS="2@127.0.0.1:9102,3@127.0.0.1:9103" \
+  -e NODE_ID=1 -e NODE_NAME=hc-1 -e LISTEN_PORT=9101 \
+  -e RING_PEERS="2@hc2_container:9102,3@hc3_container:9103" \
+  -e HEARTBEAT_INTERVAL_MS=500 -e HEARTBEAT_TIMEOUT_MS=1500 \
   -e MODE=auto \
   tp-health-checker
 
 # Nodo 2.
-docker run --rm -it \
+docker run --rm -it --name hc2_container --network ringnet \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e NODE_ID=2 \
-  -e NODE_NAME=hc-2 \
-  -e LISTEN_PORT=9102 \
-  -e RING_PEERS="1@127.0.0.1:9101,3@127.0.0.1:9103" \
+  -e NODE_ID=2 -e NODE_NAME=hc-2 -e LISTEN_PORT=9102 \
+  -e RING_PEERS="1@hc1_container:9101,3@hc3_container:9103" \
+  -e HEARTBEAT_INTERVAL_MS=500 -e HEARTBEAT_TIMEOUT_MS=1500 \
   -e MODE=auto \
   tp-health-checker
 
 # Nodo 3.
-docker run --rm -it \
+docker run --rm -it --name hc3_container --network ringnet \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e NODE_ID=3 \
-  -e NODE_NAME=hc-3 \
-  -e LISTEN_PORT=9103 \
-  -e RING_PEERS="1@127.0.0.1:9101,2@127.0.0.1:9102" \
+  -e NODE_ID=3 -e NODE_NAME=hc-3 -e LISTEN_PORT=9103 \
+  -e RING_PEERS="1@hc1_container:9101,2@hc2_container:9102" \
+  -e HEARTBEAT_INTERVAL_MS=500 -e HEARTBEAT_TIMEOUT_MS=1500 \
   -e MODE=auto \
   tp-health-checker
 
 ```
 
+### 🐳 Ver logs en una ùnica consola
+
+```bash
+
+docker logs -f $(docker ps -q --filter ancestor=tp-health-checker)
+
+```
+
+
+### 🐳 Tirar un nodo
+
+```bash
+
+docker stop hc'$NUMERO_CONTENEDOR'_container
+
+```
+
+#### Ejemplo
+
+```bash
+
+docker stop hc2_container
+
+```
+
+### 🐳 Script de prueba (3 nodos)
+
+```bash
+
+./run_ring.sh
+
+```
+
+Luego para borrar esos contenedores de forma rápida se puede utilizar el siguiente comando.
+
+```bash
+
+docker rm -f hc1_container hc2_container hc3_container 2>/dev/null
+
+```
