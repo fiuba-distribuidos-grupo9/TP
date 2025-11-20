@@ -7,7 +7,9 @@ from middleware.rabbitmq_message_middleware_exchange import (
     RabbitMQMessageMiddlewareExchange,
 )
 from middleware.rabbitmq_message_middleware_queue import RabbitMQMessageMiddlewareQueue
-from shared import communication_protocol
+from shared.communication_protocol.batch_message import BatchMessage
+from shared.communication_protocol.eof_message import EOFMessage
+from shared.communication_protocol.message import Message
 
 
 class StreamDataHandler:
@@ -70,7 +72,7 @@ class StreamDataHandler:
         self._join_key = join_key
         self._transform_function = transform_function
 
-        self._stream_data_buffer_by_session_id: dict[str, list[str]] = {}
+        self._stream_data_buffer_by_session_id: dict[str, list[BatchMessage]] = {}
 
         self._base_data_by_session_id = base_data_by_session_id
         self._base_data_by_session_id_lock = base_data_by_session_id_lock
@@ -118,55 +120,61 @@ class StreamDataHandler:
         stream_value = self._transform_function(stream_optional_value)
         return base_value == stream_value  # type: ignore
 
-    def _join_with_base_data(self, message: str) -> str:
-        message_type = communication_protocol.get_message_type(message)
-        session_id = communication_protocol.get_message_session_id(message)
-        stream_data = communication_protocol.decode_batch_message(message)
-        joined_data: list[dict[str, str]] = []
-        for stream_item in stream_data:
+    def _join_with_base_data(self, message: BatchMessage) -> BatchMessage:
+        message_type = message.message_type()
+        session_id = message.session_id()
+        stream_batch_items = message.batch_items()
+        joined_batch_items: list[dict[str, str]] = []
+        for stream_batch_item in stream_batch_items:
             was_joined = False
-            for base_item in self._base_data_by_session_id[session_id]:
-                if self._should_be_joined(base_item, stream_item):
-                    joined_item = {**stream_item, **base_item}
-                    joined_data.append(joined_item)
+            for base_batch_item in self._base_data_by_session_id[session_id]:
+                if self._should_be_joined(base_batch_item, stream_batch_item):
+                    joined_batch_item = {**stream_batch_item, **base_batch_item}
+                    joined_batch_items.append(joined_batch_item)
                     was_joined = True
                     break
             if not was_joined:
                 self._log_warning(
-                    f"action: join_with_base_data | result: error | stream_item: {stream_item}"
+                    f"action: join_with_base_data | result: error | stream_item: {stream_batch_item}"
                 )
-        return communication_protocol.encode_batch_message(
-            message_type, session_id, joined_data
+        return BatchMessage(
+            message_type=message_type,
+            session_id=session_id,
+            message_id=message.message_id(),
+            controller_id=str(self._controller_id),
+            batch_items=joined_batch_items,
         )
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, message: str) -> None:
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
         mom_cleaned_data_producer = self._mom_producers[self._current_producer_id]
-        mom_cleaned_data_producer.send(message)
+        mom_cleaned_data_producer.send(str(message))
 
         self._current_producer_id += 1
         if self._current_producer_id >= len(self._mom_producers):
             self._current_producer_id = 0
 
-    def _handle_all_buffered_messages(self, session_id: str) -> None:
+    def _send_all_buffered_messages(self, session_id: str) -> None:
         self._log_info(
-            f"action: handle_all_buffered_messages | result: success | session_id: {session_id}"
+            f"action: send_all_buffered_messages | result: success | session_id: {session_id}"
         )
-        messages = self._stream_data_buffer_by_session_id.get(session_id, [])
-        for message in messages:
-            joined_message = self._join_with_base_data(message)
-            if not communication_protocol.message_without_payload(joined_message):
+        batch_messages = self._stream_data_buffer_by_session_id.get(session_id, [])
+        for batch_message in batch_messages:
+            joined_message = self._join_with_base_data(batch_message)
+            if len(joined_message.batch_items()) > 0:
                 self._mom_send_message_to_next(joined_message)
         self._stream_data_buffer_by_session_id[session_id] = []
 
-    def _handle_batch_message_when_all_base_data_received(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
+    def _handle_data_batch_message_when_all_base_data_received(
+        self, message: BatchMessage
+    ) -> None:
+        session_id = message.session_id()
         with self._all_base_data_received_lock:
             self._stream_data_buffer_by_session_id.setdefault(session_id, [])
             self._stream_data_buffer_by_session_id[session_id].append(message)
             if self._all_base_data_received.get(session_id, False):
-                self._handle_all_buffered_messages(session_id)
+                self._send_all_buffered_messages(session_id)
             else:
                 self._log_debug(
                     f"action: stream_data_received_before_base_data | result: success | session_id: {session_id}"
@@ -191,8 +199,8 @@ class StreamDataHandler:
             f"action: clean_session_data | result: success | session_id: {session_id}"
         )
 
-    def _handle_batch_eof(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
+    def _handle_data_batch_eof_message(self, message: EOFMessage) -> None:
+        session_id = message.session_id()
         self._eof_recv_from_prev_controllers.setdefault(session_id, 0)
         self._eof_recv_from_prev_controllers[session_id] += 1
         self._log_debug(
@@ -212,10 +220,10 @@ class StreamDataHandler:
                 self._log_info(
                     f"action: all_eofs_received | result: success | session_id: {session_id}"
                 )
-                self._handle_all_buffered_messages(session_id)
+                self._send_all_buffered_messages(session_id)
 
                 for mom_producer in self._mom_producers:
-                    mom_producer.send(message)
+                    mom_producer.send(str(message))
                 self._log_info(
                     f"action: eof_sent | result: success | session_id: {session_id}"
                 )
@@ -226,19 +234,18 @@ class StreamDataHandler:
                     f"action: all_eofs_received_before_base_data | result: success | session_id: {session_id}"
                 )
                 self._eof_recv_from_prev_controllers[session_id] -= 1
-                self._mom_consumer.send(message)
+                self._mom_consumer.send(str(message))
 
     def _handle_stream_data(self, message_as_bytes: bytes) -> None:
         if not self._is_running():
             self._mom_consumer.stop_consuming()
             return
 
-        message = message_as_bytes.decode("utf-8")
-        message_type = communication_protocol.get_message_type(message)
-        if message_type != communication_protocol.EOF:
-            self._handle_batch_message_when_all_base_data_received(message)
-        else:
-            self._handle_batch_eof(message)
+        message = Message.suitable_for_str(message_as_bytes.decode("utf-8"))
+        if isinstance(message, BatchMessage):
+            self._handle_data_batch_message_when_all_base_data_received(message)
+        elif isinstance(message, EOFMessage):
+            self._handle_data_batch_eof_message(message)
 
     # ============================== PRIVATE - RUN ============================== #
 

@@ -1,5 +1,5 @@
 from controllers.output_builders.shared.query_output_builder import QueryOutputBuilder
-from shared import communication_protocol
+from shared.communication_protocol import communication_protocol
 
 
 class Query3XOutputBuilder(QueryOutputBuilder):

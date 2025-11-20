@@ -6,7 +6,12 @@ import uuid
 from typing import Any, Callable
 
 from middleware.rabbitmq_message_middleware_queue import RabbitMQMessageMiddlewareQueue
-from shared import communication_protocol, constants
+from shared import constants
+from shared.communication_protocol import communication_protocol
+from shared.communication_protocol.batch_message import BatchMessage
+from shared.communication_protocol.eof_message import EOFMessage
+from shared.communication_protocol.handshake_message import HandshakeMessage
+from shared.communication_protocol.message import Message
 
 
 class ClientSessionHandler:
@@ -176,12 +181,13 @@ class ClientSessionHandler:
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, data_type: str, message: str) -> None:
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
+        data_type = message.message_type()
         current_worker_id = self._cleaners_data[data_type]["current_worker_id"]
 
         mom_producers = self._mom_cleaners_connections[data_type]
         mom_producer: RabbitMQMessageMiddlewareQueue = mom_producers[current_worker_id]
-        mom_producer.send(message)
+        mom_producer.send(str(message))
 
         current_worker_id += 1
 
@@ -195,22 +201,20 @@ class ClientSessionHandler:
     def _send_client_handshake_message(
         self, client_socket: socket.socket, client_id: str
     ) -> None:
-        handshake_response_message = communication_protocol.encode_handshake_message(
-            self._session_id, client_id
-        )
-        self._socket_send_message(client_socket, handshake_response_message)
+        handshake_message = HandshakeMessage(self._session_id, client_id)
+        self._socket_send_message(client_socket, str(handshake_message))
         self._log_info(
             f"action: handshake_response_sent | result: success | client_id: {client_id}"
         )
 
     def _accept_client_handshake_message(self, client_socket: socket.socket) -> None:
         received_message = self._socket_receive_message(client_socket)
-        (client_id, payload) = communication_protocol.decode_handshake_message(
-            received_message
-        )
-        if payload != communication_protocol.ALL_QUERIES:
+
+        handshake_message = HandshakeMessage.from_str(received_message)
+        client_id = handshake_message.id()
+        if handshake_message.payload() != communication_protocol.ALL_QUERIES:
             raise ValueError(
-                f"Invalid handshake payload received from client: {payload}"
+                f"Invalid handshake payload received from client: {handshake_message.payload()}"
             )
         self._log_info(
             f"action: handshake_received | result: success | client_id: {client_id}"
@@ -220,12 +224,14 @@ class ClientSessionHandler:
 
     # ============================== PRIVATE - RECEIVE CLIENT DATA ============================== #
 
-    def _handle_data_batch_message(self, message: str) -> None:
-        data_type = communication_protocol.get_message_type(message)
-        self._mom_send_message_to_next(data_type, message)
+    def _handle_data_batch_message(self, message: BatchMessage) -> None:
+        message.update_message_id(uuid.uuid4().hex)
+        message.update_controller_id("0")
 
-    def _handle_data_batch_eof_message(self, message: str) -> None:
-        data_type = communication_protocol.decode_eof_message(message)
+        self._mom_send_message_to_next(message)
+
+    def _handle_data_batch_eof_message(self, message: EOFMessage) -> None:
+        data_type = message.batch_message_type()
         if data_type not in self._client_eof_received:
             raise ValueError(
                 f'Invalid EOF message type received from client "{data_type}"'
@@ -234,25 +240,16 @@ class ClientSessionHandler:
         self._log_info(f"action: {data_type}_eof_received | result: success")
 
         for mom_producer in self._mom_cleaners_connections[data_type]:
-            mom_producer.send(message)
+            message.update_message_id(uuid.uuid4().hex)
+            message.update_controller_id("0")
 
-    def _handle_client_message(self, message: str) -> None:
-        message_type = communication_protocol.get_message_type(message)
-        match message_type:
-            case (
-                communication_protocol.MENU_ITEMS_BATCH_MSG_TYPE
-                | communication_protocol.STORES_BATCH_MSG_TYPE
-                | communication_protocol.TRANSACTION_ITEMS_BATCH_MSG_TYPE
-                | communication_protocol.TRANSACTIONS_BATCH_MSG_TYPE
-                | communication_protocol.USERS_BATCH_MSG_TYPE
-            ):
-                self._handle_data_batch_message(message)
-            case communication_protocol.EOF:
-                self._handle_data_batch_eof_message(message)
-            case _:
-                raise ValueError(
-                    f'Invalid message type received from client "{message_type}"'
-                )
+            mom_producer.send(str(message))
+
+    def _handle_client_message(self, message: Message) -> None:
+        if isinstance(message, BatchMessage):
+            self._handle_data_batch_message(message)
+        elif isinstance(message, EOFMessage):
+            self._handle_data_batch_eof_message(message)
 
     def _with_each_message_do(
         self,
@@ -268,7 +265,7 @@ class ClientSessionHandler:
             if message == "":
                 continue
             message += communication_protocol.MSG_END_DELIMITER
-            callback(message, *args, **kwargs)
+            callback(Message.suitable_for_str(message), *args, **kwargs)
 
     def _receive_all_data_from_client(self, client_socket: socket.socket) -> None:
         while not all(self._client_eof_received.values()):
@@ -276,6 +273,9 @@ class ClientSessionHandler:
                 return
 
             received_message = self._socket_receive_message(client_socket)
+            self._log_info(
+                f"action: receive_data_from_client | result: success | msg: {received_message}"
+            )
             self._with_each_message_do(
                 received_message,
                 self._handle_client_message,
@@ -295,14 +295,14 @@ class ClientSessionHandler:
         return True
 
     def _handle_query_result_batch_message(
-        self, client_socket: socket.socket, message: str
+        self, client_socket: socket.socket, message: BatchMessage
     ) -> None:
-        self._socket_send_message(client_socket, message)
+        self._socket_send_message(client_socket, str(message))
 
     def _handle_query_result_eof_message(
-        self, client_socket: socket.socket, message: str
+        self, client_socket: socket.socket, message: EOFMessage
     ) -> None:
-        data_type = communication_protocol.decode_eof_message(message)
+        data_type = message.batch_message_type()
         if data_type not in self._output_builders_eof_received:
             raise ValueError(
                 f'Invalid EOF message type received from output builder "{data_type}"'
@@ -312,30 +312,18 @@ class ClientSessionHandler:
 
         workers_amount = self._output_builders_data[data_type][constants.WORKERS_AMOUNT]
         if self._output_builders_eof_received[data_type] == workers_amount:
-            self._socket_send_message(client_socket, message)
+            self._socket_send_message(client_socket, str(message))
             self._log_info(
                 f"action: eof_{data_type}_results_to_client_sent | result: success"
             )
 
     def _handle_output_builder_message(self, client_socket: socket.socket) -> Callable:
         def _on_message_callback(message_as_bytes: bytes) -> None:
-            message = message_as_bytes.decode("utf-8")
-            message_type = communication_protocol.get_message_type(message)
-            match message_type:
-                case (
-                    communication_protocol.QUERY_RESULT_1X_MSG_TYPE
-                    | communication_protocol.QUERY_RESULT_21_MSG_TYPE
-                    | communication_protocol.QUERY_RESULT_22_MSG_TYPE
-                    | communication_protocol.QUERY_RESULT_3X_MSG_TYPE
-                    | communication_protocol.QUERY_RESULT_4X_MSG_TYPE
-                ):
-                    self._handle_query_result_batch_message(client_socket, message)
-                case communication_protocol.EOF:
-                    self._handle_query_result_eof_message(client_socket, message)
-                case _:
-                    raise ValueError(
-                        f'Invalid message type received from client "{message_type}"'
-                    )
+            message = Message.suitable_for_str(message_as_bytes.decode("utf-8"))
+            if isinstance(message, BatchMessage):
+                self._handle_query_result_batch_message(client_socket, message)
+            elif isinstance(message, EOFMessage):
+                self._handle_query_result_eof_message(client_socket, message)
 
             if self._all_eof_received_from_output_builders():
                 self._mom_output_builders_connection.stop_consuming()

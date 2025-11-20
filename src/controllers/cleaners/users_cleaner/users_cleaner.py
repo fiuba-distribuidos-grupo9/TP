@@ -1,10 +1,11 @@
 import logging
+import uuid
 from typing import Any
 
 from controllers.cleaners.shared.cleaner import Cleaner
 from middleware.middleware import MessageMiddleware
 from middleware.rabbitmq_message_middleware_queue import RabbitMQMessageMiddlewareQueue
-from shared import communication_protocol
+from shared.communication_protocol.batch_message import BatchMessage
 
 
 class UsersCleaner(Cleaner):
@@ -28,14 +29,12 @@ class UsersCleaner(Cleaner):
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, message: str) -> None:
-        batchs_by_hash: dict[int, list] = {}
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
+        batch_items_by_hash: dict[int, list] = {}
         # [IMPORTANT] this must consider the next controller's grouping key
         sharding_key = "user_id"
 
-        message_type = communication_protocol.get_message_type(message)
-        session_id = communication_protocol.get_message_session_id(message)
-        for batch_item in communication_protocol.decode_batch_message(message):
+        for batch_item in message.batch_items():
             if batch_item[sharding_key] == "":
                 logging.warning(
                     f"action: invalid_{sharding_key} | {sharding_key}: {batch_item[sharding_key]} | result: skipped"
@@ -45,12 +44,16 @@ class UsersCleaner(Cleaner):
             batch_item[sharding_key] = str(sharding_value)
 
             hash = sharding_value % len(self._mom_producers)
-            batchs_by_hash.setdefault(hash, [])
-            batchs_by_hash[hash].append(batch_item)
+            batch_items_by_hash.setdefault(hash, [])
+            batch_items_by_hash[hash].append(batch_item)
 
-        for hash, user_batch in batchs_by_hash.items():
+        for hash, batch_items in batch_items_by_hash.items():
             mom_producer = self._mom_producers[hash]
-            message = communication_protocol.encode_batch_message(
-                message_type, session_id, user_batch
+            message = BatchMessage(
+                message_type=message.message_type(),
+                session_id=message.session_id(),
+                message_id=uuid.uuid4().hex,
+                controller_id=str(self._controller_id),
+                batch_items=batch_items,
             )
-            mom_producer.send(message)
+            mom_producer.send(str(message))

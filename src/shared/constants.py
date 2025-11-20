@@ -1,4 +1,4 @@
-from shared import communication_protocol
+from shared.communication_protocol import communication_protocol
 
 # ============================== COMMON CONSTANTS ============================== #
 

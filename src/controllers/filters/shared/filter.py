@@ -1,10 +1,12 @@
 import logging
 from abc import abstractmethod
-from typing import Any, Callable
+from typing import Any
 
 from controllers.shared.controller import Controller
 from middleware.middleware import MessageMiddleware
-from shared import communication_protocol
+from shared.communication_protocol.batch_message import BatchMessage
+from shared.communication_protocol.eof_message import EOFMessage
+from shared.communication_protocol.message import Message
 
 
 class Filter(Controller):
@@ -66,43 +68,28 @@ class Filter(Controller):
     def _should_be_included(self, batch_item: dict[str, str]) -> bool:
         raise NotImplementedError("subclass responsibility")
 
-    def _transform_batch_message_using(
-        self,
-        message: str,
-        decoder: Callable,
-        encoder: Callable,
-        message_type: str,
-        session_id: str,
-    ) -> str:
-        new_batch = []
-        for item in decoder(message):
-            if self._should_be_included(item):
-                new_batch.append(item)
-        return str(encoder(message_type, session_id, new_batch))
-
-    def _transform_batch_message(self, message: str) -> str:
-        return self._transform_batch_message_using(
-            message,
-            communication_protocol.decode_batch_message,
-            communication_protocol.encode_batch_message,
-            communication_protocol.get_message_type(message),
-            communication_protocol.get_message_session_id(message),
-        )
+    def _transform_batch_message(self, message: BatchMessage) -> BatchMessage:
+        updated_batch_items = []
+        for batch_item in message.batch_items():
+            if self._should_be_included(batch_item):
+                updated_batch_items.append(batch_item)
+        message.update_batch_items(updated_batch_items)
+        return message
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, message: str) -> None:
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
         mom_producer = self._mom_producers[self._current_producer_id]
-        mom_producer.send(message)
+        mom_producer.send(str(message))
 
         self._current_producer_id += 1
         if self._current_producer_id >= len(self._mom_producers):
             self._current_producer_id = 0
 
-    def _handle_data_batch_message(self, message: str) -> None:
-        output_message = self._transform_batch_message(message)
-        if not communication_protocol.message_without_payload(output_message):
-            self._mom_send_message_to_next(output_message)
+    def _handle_data_batch_message(self, message: BatchMessage) -> None:
+        updated_message = self._transform_batch_message(message)
+        if len(updated_message.batch_items()) > 0:
+            self._mom_send_message_to_next(updated_message)
 
     def _clean_session_data_of(self, session_id: str) -> None:
         logging.info(
@@ -115,8 +102,8 @@ class Filter(Controller):
             f"action: clean_session_data | result: success | session_id: {session_id}"
         )
 
-    def _handle_data_batch_eof(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
+    def _handle_data_batch_eof_message(self, message: EOFMessage) -> None:
+        session_id = message.session_id()
         self._eof_recv_from_prev_controllers.setdefault(session_id, 0)
         self._eof_recv_from_prev_controllers[session_id] += 1
         logging.debug(
@@ -132,7 +119,7 @@ class Filter(Controller):
             )
 
             for mom_producer in self._mom_producers:
-                mom_producer.send(message)
+                mom_producer.send(str(message))
             logging.info(
                 f"action: eof_sent | result: success | session_id: {session_id}"
             )
@@ -144,12 +131,11 @@ class Filter(Controller):
             self._mom_consumer.stop_consuming()
             return
 
-        message = message_as_bytes.decode("utf-8")
-        message_type = communication_protocol.get_message_type(message)
-        if message_type != communication_protocol.EOF:
+        message = Message.suitable_for_str(message_as_bytes.decode("utf-8"))
+        if isinstance(message, BatchMessage):
             self._handle_data_batch_message(message)
-        else:
-            self._handle_data_batch_eof(message)
+        elif isinstance(message, EOFMessage):
+            self._handle_data_batch_eof_message(message)
 
     # ============================== PRIVATE - RUN ============================== #
 

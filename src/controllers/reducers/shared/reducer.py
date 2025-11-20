@@ -1,11 +1,14 @@
 import logging
+import uuid
 from abc import abstractmethod
 from typing import Any
 
 from controllers.reducers.shared.reduced_data import ReducedData
 from controllers.shared.controller import Controller
 from middleware.middleware import MessageMiddleware
-from shared import communication_protocol
+from shared.communication_protocol.batch_message import BatchMessage
+from shared.communication_protocol.eof_message import EOFMessage
+from shared.communication_protocol.message import Message
 
 
 class Reducer(Controller):
@@ -133,9 +136,9 @@ class Reducer(Controller):
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, message: str) -> None:
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
         mom_cleaned_data_producer = self._mom_producers[self._current_producer_id]
-        mom_cleaned_data_producer.send(message)
+        mom_cleaned_data_producer.send(str(message))
 
         self._current_producer_id += 1
         if self._current_producer_id >= len(self._mom_producers):
@@ -146,27 +149,29 @@ class Reducer(Controller):
             f"action: all_data_sent | result: in_progress | session_id: {session_id}"
         )
 
-        batch = self._take_next_batch(session_id)
-        while len(batch) != 0 and self._is_running():
-            message_type = self._message_type()
-            message = communication_protocol.encode_batch_message(
-                message_type, session_id, batch
+        batch_items = self._take_next_batch(session_id)
+        while len(batch_items) != 0 and self._is_running():
+            message = BatchMessage(
+                message_type=self._message_type(),
+                session_id=session_id,
+                message_id=uuid.uuid4().hex,
+                controller_id=str(self._controller_id),
+                batch_items=batch_items,
             )
             self._mom_send_message_to_next(message)
             logging.debug(
-                f"action: batch_sent | result: success | session_id: {session_id} | batch_size: {len(batch)}"
+                f"action: batch_sent | result: success | session_id: {session_id} | batch_size: {len(batch_items)}"
             )
-            batch = self._take_next_batch(session_id)
+            batch_items = self._take_next_batch(session_id)
 
         del self._reduced_data_by_session_id[session_id]
         logging.info(
             f"action: all_data_sent | result: success | session_id: {session_id}"
         )
 
-    def _handle_data_batch_message(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
-        batch = communication_protocol.decode_batch_message(message)
-        for batch_item in batch:
+    def _handle_data_batch_message(self, message: BatchMessage) -> None:
+        session_id = message.session_id()
+        for batch_item in message.batch_items():
             self._reduce_by_keys(session_id, batch_item)
 
     def _clean_session_data_of(self, session_id: str) -> None:
@@ -180,8 +185,8 @@ class Reducer(Controller):
             f"action: clean_session_data | result: success | session_id: {session_id}"
         )
 
-    def _handle_data_batch_eof(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
+    def _handle_data_batch_eof_message(self, message: EOFMessage) -> None:
+        session_id = message.session_id()
         self._eof_recv_from_prev_controllers.setdefault(session_id, 0)
         self._eof_recv_from_prev_controllers[session_id] += 1
         logging.info(
@@ -199,7 +204,7 @@ class Reducer(Controller):
             self._send_all_data_using_batchs(session_id)
 
             for mom_producer in self._mom_producers:
-                mom_producer.send(message)
+                mom_producer.send(str(message))
             logging.info(
                 f"action: eof_sent | result: success | session_id: {session_id}"
             )
@@ -211,12 +216,11 @@ class Reducer(Controller):
             self._mom_consumer.stop_consuming()
             return
 
-        message = message_as_bytes.decode("utf-8")
-        message_type = communication_protocol.get_message_type(message)
-        if message_type != communication_protocol.EOF:
+        message = Message.suitable_for_str(message_as_bytes.decode("utf-8"))
+        if isinstance(message, BatchMessage):
             self._handle_data_batch_message(message)
-        else:
-            self._handle_data_batch_eof(message)
+        elif isinstance(message, EOFMessage):
+            self._handle_data_batch_eof_message(message)
 
     # ============================== PRIVATE - RUN ============================== #
 

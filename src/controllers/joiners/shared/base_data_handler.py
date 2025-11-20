@@ -6,7 +6,9 @@ from middleware.rabbitmq_message_middleware_exchange import (
     RabbitMQMessageMiddlewareExchange,
 )
 from middleware.rabbitmq_message_middleware_queue import RabbitMQMessageMiddlewareQueue
-from shared import communication_protocol
+from shared.communication_protocol.batch_message import BatchMessage
+from shared.communication_protocol.eof_message import EOFMessage
+from shared.communication_protocol.message import Message
 
 
 class BaseDataHandler:
@@ -76,13 +78,12 @@ class BaseDataHandler:
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _handle_base_data_batch_message(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
-        batch_message = communication_protocol.decode_batch_message(message)
-        for item_batch in batch_message:
+    def _handle_base_data_batch_message(self, message: BatchMessage) -> None:
+        session_id = message.session_id()
+        for batch_item in message.batch_items():
             with self._base_data_by_session_id_lock:
                 self._base_data_by_session_id.setdefault(session_id, [])
-                self._base_data_by_session_id[session_id].append(item_batch)
+                self._base_data_by_session_id[session_id].append(batch_item)
 
     def _clean_session_data_of(self, session_id: str) -> None:
         logging.info(
@@ -95,8 +96,8 @@ class BaseDataHandler:
             f"action: clean_session_data | result: success | session_id: {session_id}"
         )
 
-    def _handle_base_data_batch_eof(self, message: str) -> None:
-        session_id = communication_protocol.get_message_session_id(message)
+    def _handle_base_data_batch_eof(self, message: EOFMessage) -> None:
+        session_id = message.session_id()
         self._eof_recv_from_prev_controllers.setdefault(session_id, 0)
         self._eof_recv_from_prev_controllers[session_id] += 1
         self._log_debug(
@@ -121,11 +122,10 @@ class BaseDataHandler:
             self._mom_consumer.stop_consuming()
             return
 
-        message = message_as_bytes.decode("utf-8")
-        message_type = communication_protocol.get_message_type(message)
-        if message_type != communication_protocol.EOF:
+        message = Message.suitable_for_str(message_as_bytes.decode("utf-8"))
+        if isinstance(message, BatchMessage):
             self._handle_base_data_batch_message(message)
-        else:
+        elif isinstance(message, EOFMessage):
             self._handle_base_data_batch_eof(message)
 
     # ============================== PRIVATE - RUN ============================== #

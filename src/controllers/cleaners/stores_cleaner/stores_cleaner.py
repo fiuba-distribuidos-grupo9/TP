@@ -5,6 +5,7 @@ from middleware.middleware import MessageMiddleware
 from middleware.rabbitmq_message_middleware_exchange import (
     RabbitMQMessageMiddlewareExchange,
 )
+from shared.communication_protocol.batch_message import BatchMessage
 
 
 class StoresCleaner(Cleaner):
@@ -32,9 +33,9 @@ class StoresCleaner(Cleaner):
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, message: str) -> None:
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
         mom_producer = self._mom_producers[self._current_producer_id]
-        mom_producer.send(message)
+        mom_producer.send(str(message))
 
         self._current_producer_id += 1
         if self._current_producer_id >= len(self._mom_producers):
