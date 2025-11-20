@@ -1,36 +1,47 @@
 # src/health_checkers/app/leader.py
 from __future__ import annotations
-import asyncio
+import threading
+import time
+from typing import Optional
 from .models import Config
-from .utils import jitter_ms
+
 
 class LeaderLoop:
+    """
+    Loop sencillo basado en hilos:
+      - Corre en un hilo dedicado.
+      - Sólo cuando este nodo es líder ejecuta la lógica de validación.
+    Por ahora, la "validación" es únicamente un print + sleep(5s).
+    """
+
     def __init__(self, cfg: Config, is_leader_callable):
         self.cfg = cfg
         self.is_leader = is_leader_callable
-        self._task = None
-        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._running = threading.Event()
 
-    async def start(self):
-        if self._task:
+    def start(self):
+        if self._thread is not None:
             return
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
+        self._running.set()
+        self._thread = threading.Thread(
+            target=self._loop,
+            name=f"LeaderLoop-{self.cfg.node_id}",
+            daemon=True,
+        )
+        self._thread.start()
 
-    async def stop(self):
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
+    def stop(self):
+        self._running.clear()
+        # No bloqueamos fuerte: el hilo se terminará solo al próximo ciclo.
+        self._thread = None
 
-    async def _loop(self):
-        while self._running:
+    def _loop(self):
+        while self._running.is_set():
             if self.is_leader():
-                # Placeholder: The leader would "make global pings".
-                # For now, it only sleeps randomly to simulate work.
-                sleep_s = jitter_ms(self.cfg.leader_sleep_min_ms, self.cfg.leader_sleep_max_ms)
-                print(f"[leader] (placeholder) dormitando {sleep_s:.2f}s antes del siguiente barrido…")
-                await asyncio.sleep(sleep_s)
-                # TODO: Implement global ping to everyone and revive whatever is necessary.
+                # Lugar central donde el líder valida al resto del sistema.
+                print(f"[leader] Nodo líder {self.cfg.node_id} validando nodos del sistema (placeholder)…")
+                time.sleep(5.0)
             else:
-                await asyncio.sleep(0.5)
+                # Si no soy líder, sólo descanso un poco y vuelvo a chequear.
+                time.sleep(1.0)
