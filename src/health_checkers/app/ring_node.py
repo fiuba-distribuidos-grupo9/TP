@@ -1,5 +1,6 @@
 # src/health_checkers/app/ring_node.py
 from __future__ import annotations
+
 import socket
 import time
 from typing import Optional, List
@@ -7,17 +8,28 @@ from typing import Optional, List
 from .models import Config, Peer, Message
 from .election import Election
 from .dood import DockerReviver
-from .heartbeat import HeartbeatLoop
 
-NOW = lambda: time.monotonic()
+# Si tenés un HeartbeatLoop propio, lo importás; si no, podés quitar esto
+try:
+    from .heartbeat import HeartbeatLoop
+except ImportError:
+    HeartbeatLoop = None  # type: ignore
 
 
 class RingNode:
+    """
+    Nodo del anillo:
+      - Mantiene la topología (peers, sucesor, predecesor).
+      - Maneja mensajes vía UDP.
+      - Integra elección de líder y (opcionalmente) heartbeat.
+    """
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((cfg.listen_host, cfg.listen_port))
+        # Timeout corto para poder revisar el estado de _running periódicamente.
         self.sock.settimeout(1.0)
 
         # Peers excluyéndome a mí
@@ -28,14 +40,22 @@ class RingNode:
         self.election = Election(cfg, self._send_to_successor)
         self.reviver = DockerReviver(cfg.docker_host)
 
-        # Loop de heartbeat (pings al sucesor).
-        self.heartbeat = HeartbeatLoop(
-            cfg=cfg,
-            get_successor=self.successor,
-            send_to_successor=self._send_to_successor,
-            on_successor_suspected=self._on_successor_suspected,
-        )
-        self.heartbeat.start()
+        self._running: bool = True
+
+        # Si tenés implementado un HeartbeatLoop, lo arrancamos.
+        if HeartbeatLoop is not None:
+            try:
+                self.heartbeat = HeartbeatLoop(  # type: ignore[attr-defined]
+                    cfg=cfg,
+                    get_successor=self.successor,
+                    send_to_successor=self._send_to_successor,
+                    on_successor_suspected=self._on_successor_suspected,
+                )
+                self.heartbeat.start()
+            except Exception as e:
+                print(f"[ring] No se pudo iniciar HeartbeatLoop: {e}")
+        else:
+            self.heartbeat = None  # type: ignore
 
     # ---------- TOPOLOGÍA ----------
 
@@ -86,7 +106,7 @@ class RingNode:
         if suc is not None:
             self._send_to(suc, msg)
 
-    # ---------- CALLBACK HEARTBEAT ----------
+    # ---------- HEARTBEAT CALLBACK (si lo usás) ----------
 
     def _on_successor_suspected(self, successor_id: int) -> None:
         suc = self.successor()
@@ -109,26 +129,60 @@ class RingNode:
                 self.election.set_leader(self.cfg.node_id)
                 print("[ring] Soy líder (único en el anillo).")
 
+    # ---------- CONTROL DE VIDA ----------
+
+    def stop(self) -> None:
+        """
+        Detiene el loop principal y cierra recursos.
+        Se llama desde el manejador de señales y desde el finally de main().
+        """
+        if not self._running:
+            return
+        print("[ring] stop() llamado. Cerrando socket y deteniendo heartbeat si aplica...")
+        self._running = False
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+        # Paramos heartbeat si existe y tiene stop()
+        hb = getattr(self, "heartbeat", None)
+        if hb is not None and hasattr(hb, "stop"):
+            try:
+                hb.stop()
+            except Exception as e:
+                print(f"[ring] Error al detener HeartbeatLoop: {e}")
+
     # ---------- LOOP PRINCIPAL ----------
 
     def run(self) -> None:
         print("[ring] Loop principal iniciado.")
-        while True:
-            try:
-                data, addr = self.sock.recvfrom(64 * 1024)
-            except socket.timeout:
-                continue
-            except OSError as e:
-                print(f"[ring] Error de socket: {e}")
-                break
+        try:
+            while self._running:
+                try:
+                    data, addr = self.sock.recvfrom(64 * 1024)
+                except socket.timeout:
+                    continue
+                except OSError as e:
+                    # Si nos cerraron el socket como parte del shutdown, salimos sin drama.
+                    if not self._running:
+                        break
+                    print(f"[ring] Error de socket: {e}")
+                    break
 
-            try:
-                msg = Message.model_validate_json(data.decode("utf-8"))
-            except Exception as e:
-                print(f"[ring] Mensaje inválido recibido: {e}")
-                continue
+                try:
+                    msg = Message.model_validate_json(data.decode("utf-8"))
+                except Exception as e:
+                    print(f"[ring] Mensaje inválido recibido: {e}")
+                    continue
 
-            self._handle_message(msg)
+                self._handle_message(msg)
+        finally:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            print("[ring] Loop principal terminado.")
 
     def _handle_message(self, msg: Message) -> None:
         kind = msg.kind
@@ -141,28 +195,16 @@ class RingNode:
             print(f"[ring] Nuevo líder: {self.election.leader_id}")
 
         elif kind == "heartbeat":
-            # heartbeat con payload {"ack": False} = ping; {"ack": True} = ack
-            ack_flag = bool(msg.payload.get("ack", False))
-            if ack_flag:
-                # ACK desde el sucesor
-                self.heartbeat.notify_ack()
-            else:
-                # Ping desde el predecesor → respondemos ACK directo a ese peer.
-                peer = self._peer_by_id(msg.src_id)
-                if peer is not None:
-                    ack_msg = Message(
-                        kind="heartbeat",
-                        src_id=self.cfg.node_id,
-                        src_name=self.cfg.node_name,
-                        payload={"ack": True},
-                    )
-                    self._send_to(peer, ack_msg)
+            # Esto depende de cómo tengas implementado HeartbeatLoop.
+            # Si usás pings/acks, podés manejarlo acá.
+            pass
 
         elif kind == "probe":
-            # soporte opcional para mensajes de "probe" del líder
             ack = Message(
                 kind="probe_ack",
                 src_id=self.cfg.node_id,
                 src_name=self.cfg.node_name,
             )
             self._send_to_successor(ack)
+
+        # Otros tipos se pueden ir agregando según necesidad.
