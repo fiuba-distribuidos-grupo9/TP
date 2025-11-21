@@ -22,8 +22,8 @@ def main():
     logging.info(f"action: init_config | result: success | params: {config_params}")
 
     consumers_config = {
-        "exchange_name_prefix": constants.FILTERED_TRN_BY_YEAR_EXCHANGE_PREFIX,
-        "routing_key_prefix": constants.FILTERED_TRN_BY_YEAR_ROUTING_KEY_PREFIX,
+        "queue_name_prefix": constants.FILTERED_TRN_BY_YEAR_QUEUE_PREFIX,
+        "queue_type": "to-keep-filtering",
         "prev_controllers_amount": int(config_params["PREV_CONTROLLERS_AMOUNT"]),
     }
     producers_config = {

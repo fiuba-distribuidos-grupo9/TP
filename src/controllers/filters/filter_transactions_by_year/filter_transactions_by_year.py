@@ -30,13 +30,12 @@ class FilterTransactionsByYear(Filter):
         producers_config: dict[str, Any],
         producer_id: int,
     ) -> MessageMiddleware:
-        exchange_name = producers_config["exchange_name_prefix"]
-        routing_key = f"{producers_config["routing_key_prefix"]}.{producer_id}"
-        return RabbitMQMessageMiddlewareExchange(
-            host=rabbitmq_host,
-            exchange_name=exchange_name,
-            route_keys=[routing_key],
-        )
+        queue_name_prefix = producers_config["queue_name_prefix"]
+        filter_by_hour_queue_name = "to-keep-filtering"
+        count_purchases_queue_name = "to-reduce"
+        filter_by_hour_queue = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=(f"{queue_name_prefix}-{filter_by_hour_queue_name}-{producer_id}"))
+        count_purchases_queue = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=(f"{queue_name_prefix}-{count_purchases_queue_name}-{producer_id}"))
+        return [filter_by_hour_queue, count_purchases_queue]
 
     def __init__(
         self,
@@ -71,6 +70,8 @@ class FilterTransactionsByYear(Filter):
         # [IMPORTANT] this must consider the next controller's grouping key
         sharding_key = "user_id"
 
+        next_controllers = len(self._mom_producers) // 2
+
         for batch_item in message.batch_items():
             if batch_item[sharding_key] == "":
                 # [IMPORTANT] If sharding value is empty, the hash will fail
@@ -82,12 +83,13 @@ class FilterTransactionsByYear(Filter):
             sharding_value = int(float(batch_item[sharding_key]))
             batch_item[sharding_key] = str(sharding_value)
 
-            hash = sharding_value % len(self._mom_producers)
+            hash = sharding_value % next_controllers
             batch_items_by_hash.setdefault(hash, [])
             batch_items_by_hash[hash].append(batch_item)
 
         for hash, batch_items in batch_items_by_hash.items():
-            mom_producer = self._mom_producers[hash]
+            filter_producer = self._mom_producers[hash * 2]
+            count_producer = self._mom_producers[hash * 2 + 1]
             message = BatchMessage(
                 message_type=message.message_type(),
                 session_id=message.session_id(),
@@ -95,4 +97,5 @@ class FilterTransactionsByYear(Filter):
                 controller_id=str(self._controller_id),
                 batch_items=batch_items,
             )
-            mom_producer.send(str(message))
+            filter_producer.send(str(message))
+            count_producer.send(str(message))

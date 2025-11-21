@@ -2,6 +2,9 @@ from typing import Any
 
 from controllers.filters.shared.filter import Filter
 from middleware.middleware import MessageMiddleware
+from middleware.rabbitmq_message_middleware_queue import (
+    RabbitMQMessageMiddlewareQueue,
+)
 from middleware.rabbitmq_message_middleware_exchange import (
     RabbitMQMessageMiddlewareExchange,
 )
@@ -16,13 +19,10 @@ class FilterTransactionsByHour(Filter):
         rabbitmq_host: str,
         consumers_config: dict[str, Any],
     ) -> MessageMiddleware:
-        exchange_name = consumers_config["exchange_name_prefix"]
-        routing_key = f"{consumers_config["routing_key_prefix"]}.{self._controller_id}"
-        return RabbitMQMessageMiddlewareExchange(
-            host=rabbitmq_host,
-            exchange_name=exchange_name,
-            route_keys=[routing_key],
-        )
+        queue_name_prefix = consumers_config["queue_name_prefix"]
+        queue_type = consumers_config["queue_type"]
+        queue_name = f"{queue_name_prefix}-{queue_type}-{self._controller_id}"
+        return RabbitMQMessageMiddlewareQueue(host=rabbitmq_host, queue_name=queue_name)
 
     def _build_mom_producer_using(
         self,
@@ -32,11 +32,11 @@ class FilterTransactionsByHour(Filter):
     ) -> MessageMiddleware:
         exchange_name = producers_config["exchange_name_prefix"]
         routing_key = f"{producers_config["routing_key_prefix"]}.{producer_id}"
-        return RabbitMQMessageMiddlewareExchange(
+        return [RabbitMQMessageMiddlewareExchange(
             host=rabbitmq_host,
             exchange_name=exchange_name,
             route_keys=[routing_key],
-        )
+        )]
 
     def __init__(
         self,
