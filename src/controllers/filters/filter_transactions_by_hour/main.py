@@ -27,8 +27,7 @@ def main():
         "prev_controllers_amount": int(config_params["PREV_CONTROLLERS_AMOUNT"]),
     }
     producers_config = {
-        "exchange_name_prefix": constants.FILTERED_TRN_BY_YEAR__HOUR_EXCHANGE_PREFIX,
-        "routing_key_prefix": constants.FILTERED_TRN_BY_YEAR__HOUR_ROUTING_KEY_PREFIX,
+        "queue_name_prefix": constants.FILTERED_TRN_BY_YEAR__HOUR_QUEUE_PREFIX,
         "next_controllers_amount": int(config_params["NEXT_CONTROLLERS_AMOUNT"]),
     }
 

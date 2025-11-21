@@ -61,6 +61,9 @@ FILTERED_TRN_BY_YEAR_QUEUE_PREFIX = "Q1X__trn-filtered-transactions-by-year-queu
 FILTERED_TRN_BY_YEAR__HOUR_EXCHANGE_PREFIX = (
     "Q1X__trn-filtered-transactions-by-year-&-hour-exchange"
 )
+
+FILTERED_TRN_BY_YEAR__HOUR_QUEUE_PREFIX = "Q1X__trn-filtered-transactions-by-year-&-hour-queue"
+
 FILTERED_TRN_BY_YEAR__HOUR_ROUTING_KEY_PREFIX = (
     "Q1X__trn-filtered-transactions-by-year-&-hour-routing-key"
 )

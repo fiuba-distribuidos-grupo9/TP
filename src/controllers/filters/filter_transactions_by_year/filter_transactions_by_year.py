@@ -4,9 +4,6 @@ from typing import Any
 
 from controllers.filters.shared.filter import Filter
 from middleware.middleware import MessageMiddleware
-from middleware.rabbitmq_message_middleware_exchange import (
-    RabbitMQMessageMiddlewareExchange,
-)
 from middleware.rabbitmq_message_middleware_queue import RabbitMQMessageMiddlewareQueue
 from shared.communication_protocol.batch_message import BatchMessage
 
