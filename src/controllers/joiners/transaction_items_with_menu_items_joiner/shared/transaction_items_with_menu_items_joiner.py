@@ -12,13 +12,6 @@ class TransactionItemsWithMenuItemsJoiner(Joiner):
         rabbitmq_host: str,
         consumers_config: dict[str, Any],
     ) -> MessageMiddleware:
-        # exchange_name = consumers_config["base_data_exchange_name_prefix"]
-        # routing_key = f"{consumers_config["base_data_routing_key_prefix"]}.*"
-        # return RabbitMQMessageMiddlewareExchange(
-        #     host=rabbitmq_host,
-        #     exchange_name=exchange_name,
-        #     route_keys=[routing_key],
-        # )
         queue_name_prefix = consumers_config["base_data_queue_name_prefix"]
         queue_type = consumers_config["queue_type"]
         queue_name = f"{queue_name_prefix}-{queue_type}-{self._controller_id}"
@@ -30,8 +23,6 @@ class TransactionItemsWithMenuItemsJoiner(Joiner):
         consumers_config: dict[str, Any],
     ) -> MessageMiddleware:
         queue_name_prefix = consumers_config["stream_data_queue_name_prefix"]
-        # queue_type = consumers_config["queue_type"]
-        # queue_name = f"{queue_name_prefix}-{queue_type}{self._controller_id}"
         queue_name = f"{queue_name_prefix}-{self._controller_id}"
         return RabbitMQMessageMiddlewareQueue(host=rabbitmq_host, queue_name=queue_name)
 

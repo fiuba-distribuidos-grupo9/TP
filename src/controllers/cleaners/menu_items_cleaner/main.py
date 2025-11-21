@@ -20,8 +20,6 @@ def main():
         "queue_name_prefix": constants.DIRTY_MIT_QUEUE_PREFIX,
     }
     producers_config = {
-        # "exchange_name_prefix": constants.CLEANED_MIT_EXCHANGE_PREFIX,
-        # "routing_key_prefix": constants.CLEANED_MIT_ROUTING_KEY_PREFIX,
         "queue_name_prefix": constants.CLEANED_MIT_QUEUE_PREFIX,
         "next_controllers_amount": int(config_params["NEXT_CONTROLLERS_AMOUNT"]),
     }

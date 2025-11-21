@@ -16,12 +16,6 @@ class StoresCleaner(Cleaner):
     def _build_mom_producer_using(
         self, rabbitmq_host: str, producers_config: dict[str, Any], producer_id: int
     ) -> MessageMiddleware:
-        # queue_name_prefix = producers_config["queue_name_prefix"]
-        # queue_name_a = f"{queue_name_prefix}-a{producer_id}"
-        # queue_name_b = f"{queue_name_prefix}-b{producer_id}"
-        # queue_a = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=queue_name_a)
-        # queue_b = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=queue_name_b)
-        # return [queue_a, queue_b]
         exchange_name = producers_config["exchange_name_prefix"]
         routing_key = f"{producers_config["routing_key_prefix"]}.{producer_id}"
         return [RabbitMQMessageMiddlewareExchange(
@@ -40,13 +34,7 @@ class StoresCleaner(Cleaner):
 
     # ============================== PRIVATE - MOM SEND/RECEIVE MESSAGES ============================== #
 
-    def _mom_send_message_to_next(self, message: BatchMessage) -> None:
-        # producer_id = (uuid.UUID(message.message_id()).int  % int(self.next_controllers_amount)) * 2
-        
-        # for i in range(2):
-        #     mom_producer = self._mom_producers[producer_id+i]
-        #     mom_producer.send(str(message))
-        
+    def _mom_send_message_to_next(self, message: BatchMessage) -> None:        
         mom_producer = self._mom_producers[self._current_producer_id]
         mom_producer.send(str(message))
 

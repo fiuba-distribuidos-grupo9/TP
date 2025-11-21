@@ -20,15 +20,6 @@ class MenuItemsCleaner(Cleaner):
         queue_a = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=queue_name_a)
         queue_b = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=queue_name_b)
         return [queue_a, queue_b]
-        
-        
-        # exchange_name = producers_config["exchange_name_prefix"]
-        # routing_key = f"{producers_config["routing_key_prefix"]}.{producer_id}"
-        # return RabbitMQMessageMiddlewareExchange(
-        #     host=rabbitmq_host,
-        #     exchange_name=exchange_name,
-        #     route_keys=[routing_key],
-        # )
 
     # ============================== PRIVATE - ACCESSING ============================== #
 
