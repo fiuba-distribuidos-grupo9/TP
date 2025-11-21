@@ -1,10 +1,9 @@
 from typing import Any
+import uuid
 
 from controllers.cleaners.shared.cleaner import Cleaner
 from middleware.middleware import MessageMiddleware
-from middleware.rabbitmq_message_middleware_exchange import (
-    RabbitMQMessageMiddlewareExchange,
-)
+from middleware.rabbitmq_message_middleware_queue import RabbitMQMessageMiddlewareQueue
 from shared.communication_protocol.batch_message import BatchMessage
 
 
@@ -15,13 +14,21 @@ class MenuItemsCleaner(Cleaner):
     def _build_mom_producer_using(
         self, rabbitmq_host: str, producers_config: dict[str, Any], producer_id: int
     ) -> MessageMiddleware:
-        exchange_name = producers_config["exchange_name_prefix"]
-        routing_key = f"{producers_config["routing_key_prefix"]}.{producer_id}"
-        return RabbitMQMessageMiddlewareExchange(
-            host=rabbitmq_host,
-            exchange_name=exchange_name,
-            route_keys=[routing_key],
-        )
+        queue_name_prefix = producers_config["queue_name_prefix"]
+        queue_name_a = f"{queue_name_prefix}-q21-{producer_id}"
+        queue_name_b = f"{queue_name_prefix}-q22-{producer_id}"
+        queue_a = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=queue_name_a)
+        queue_b = RabbitMQMessageMiddlewareQueue(host=rabbitmq_host,queue_name=queue_name_b)
+        return [queue_a, queue_b]
+        
+        
+        # exchange_name = producers_config["exchange_name_prefix"]
+        # routing_key = f"{producers_config["routing_key_prefix"]}.{producer_id}"
+        # return RabbitMQMessageMiddlewareExchange(
+        #     host=rabbitmq_host,
+        #     exchange_name=exchange_name,
+        #     route_keys=[routing_key],
+        # )
 
     # ============================== PRIVATE - ACCESSING ============================== #
 
@@ -36,7 +43,9 @@ class MenuItemsCleaner(Cleaner):
     def _mom_send_message_to_next(self, message: BatchMessage) -> None:
         mom_producer = self._mom_producers[self._current_producer_id]
         mom_producer.send(str(message))
+        mom_producer = self._mom_producers[self._current_producer_id+1]
+        mom_producer.send(str(message))
 
-        self._current_producer_id += 1
+        self._current_producer_id += 2
         if self._current_producer_id >= len(self._mom_producers):
             self._current_producer_id = 0

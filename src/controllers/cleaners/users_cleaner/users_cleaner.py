@@ -17,7 +17,7 @@ class UsersCleaner(Cleaner):
     ) -> MessageMiddleware:
         queue_name_prefix = producers_config["queue_name_prefix"]
         queue_name = f"{queue_name_prefix}-{producer_id}"
-        return RabbitMQMessageMiddlewareQueue(host=rabbitmq_host, queue_name=queue_name)
+        return [RabbitMQMessageMiddlewareQueue(host=rabbitmq_host, queue_name=queue_name)]
 
     # ============================== PRIVATE - ACCESSING ============================== #
 

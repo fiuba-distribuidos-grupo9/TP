@@ -46,8 +46,9 @@ CLEANED_TIT_QUEUE_PREFIX = "cleaned-transaction-items"
 CLEANED_TRN_QUEUE_PREFIX = "cleaned-transactions"
 CLEANED_USR_QUEUE_PREFIX = "cleaned-users"
 CLEANED_MIT_EXCHANGE_PREFIX = "cleaned-menu-items-exchange"
-CLEANED_STR_EXCHANGE_PREFIX = "cleaned-stores-exchange"
+CLEANED_MIT_QUEUE_PREFIX = "cleaned-menu-items-queue"
 CLEANED_MIT_ROUTING_KEY_PREFIX = "cleaned-menu-items-routing-key"
+CLEANED_STR_EXCHANGE_PREFIX = "cleaned_stores-exchange"
 CLEANED_STR_ROUTING_KEY_PREFIX = "cleaned-stores-routing-key"
 
 # query 1
