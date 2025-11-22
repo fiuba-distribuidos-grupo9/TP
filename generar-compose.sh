@@ -126,14 +126,6 @@ function add-server-service() {
   add-line $compose_file '    depends_on:'
   add-line $compose_file '      rabbitmq-message-middleware:'
   add-line $compose_file '        condition: service_healthy'
-  add-line $compose_file '      transaction_items_with_menu_items_query_21_joiner_0:'
-  add-line $compose_file '        condition: service_started'
-  add-line $compose_file '      transaction_items_with_menu_items_query_22_joiner_0:'
-  add-line $compose_file '        condition: service_started'
-  add-line $compose_file '      transactions_with_stores_query_3x_joiner_0:'
-  add-line $compose_file '        condition: service_started'
-  add-line $compose_file '      transactions_with_stores_query_4x_joiner_0:'
-  add-line $compose_file '        condition: service_started'
 }
 
 # ============================== PRIVATE - CLEANERS ============================== #
